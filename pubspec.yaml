@@ -1,0 +1,16 @@
+name: xcb2dart
+version: 0.0.0-dev.1
+
+description:
+  A tool to convert XCB proto files into Dart code.
+
+homepage: https://github.com/robert.ancell/xcb2dart
+
+dependencies:
+  xml: ^4.4.1
+
+environment:
+  sdk: '>=2.7.2 <3.0.0'
+
+dev_dependencies:
+  pedantic: ^1.9.0

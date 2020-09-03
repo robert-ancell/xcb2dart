@@ -1,0 +1,1 @@
+A tool to convert XCB proto files into Dart code.
