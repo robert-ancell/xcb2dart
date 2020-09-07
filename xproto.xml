@@ -1946,7 +1946,7 @@ The specified `direction` is invalid.
       <field type="CARD16" name="width" />
       <field type="CARD16" name="height" />
       <field type="CARD16" name="border_width" />
-      <pad bytes="2" />
+      <pad bytes="2" /> <!-- 10? -->
       <doc>
       <field name="root"><![CDATA[
 Root window of the screen containing `drawable`.

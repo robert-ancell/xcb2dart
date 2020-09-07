@@ -19,124 +19,70 @@ void main(List<String> args) async {
     var name = request.getAttribute('name');
     var opcode = request.getAttribute('opcode');
     var reply = request.getElement('reply');
+    var fields = getFields(request);
+    var namedArgs = fields.length > 1;
 
-    var args = <String>[];
-    var argNames = <String>[];
-    var replyArgs = <String>[];
-    var replyArgNames = <String>[];
-
-    var fields = request.children
-        .where((node) => node is XmlElement)
-        .map((node) => node as XmlElement);
-
-    var refs = <String>{};
-    for (var list in fields.where((e) => e.name.local == 'list')) {
-      var fieldref = list.getElement('fieldref');
-      if (fieldref != null) {
-        refs.add(fieldref.text);
-      }
-    }
-
-    for (var element in fields) {
-      if (element.name.local == 'field') {
-        var fieldType = element.getAttribute('type');
-        var fieldName = element.getAttribute('name');
-
-        if (!refs.contains(fieldName)) {
-          argNames.add(xcbFieldToDartName(fieldName));
-          args.add(
-              '${xcbTypeToDartType(fieldType)} ${xcbFieldToDartName(fieldName)}');
-        }
-      } else if (element.name.local == 'list') {
-        var listType = element.getAttribute('type');
-        var listName = element.getAttribute('name');
-
-        argNames.add(xcbFieldToDartName(listName));
-        if (listType == 'char') {
-          args.add('String ${xcbFieldToDartName(listName)}');
-        } else {
-          args.add(
-              'List<${xcbTypeToDartType(listType)}> ${xcbFieldToDartName(listName)}');
-        }
-      }
+    classes.add(makeMessageClass(request, name, 'Request'));
+    if (reply != null) {
+      classes.add(makeMessageClass(reply, name, 'Reply'));
     }
 
     var functionName = requestNameToFunctionName(name);
     String returnValue;
+    String returnName;
     var functionSuffix = '';
     if (reply != null) {
-      returnValue = 'Future<X11${name}Reply>';
+      var replyFields = getFields(reply);
+      if (replyFields.length == 1) {
+        returnName = replyFields.keys.first;
+        returnValue = 'Future<${replyFields.values.first}>';
+      } else {
+        returnValue = 'Future<X11${name}Reply>';
+      }
       functionSuffix = ' async';
     } else {
-      returnValue = 'void';
+      returnValue = 'int';
     }
+
+    var constructorArgs = <String>[];
+    var args = <String>[];
+    fields.forEach((name, type) {
+      if (namedArgs) {
+        constructorArgs.add('${name}: ${name}');
+      } else {
+        constructorArgs.add(name);
+      }
+      args.add('${type} ${name}');
+    });
 
     var code = '';
-    code += 'class X11${name}Request extends X11Request {\n';
-    for (var arg in args) {
-      code += '  final ${arg};\n';
-    }
-    code += '\n';
-    code +=
-        '  X11${name}Request(${argNames.map((name) => 'this.${name}').join(', ')});\n';
-    code += '\n';
-    code +=
-        '  factory X11${name}Request.fromBuffer(int data, X11ReadBuffer buffer) {\n';
-    for (var node in request.children.where((node) => node is XmlElement)) {
-      var call = makeReadCall(node as XmlElement);
-      if (call != null) {
-        code += '    ${call};\n';
-      }
-    }
-    code += '    return X11${name}Request(${argNames.join(', ')});\n';
-    code += '  }\n';
-    code += '\n';
-    code += '  @override\n';
-    code += '  int encode(X11WriteBuffer buffer) {\n';
-    for (var node in request.children.where((node) => node is XmlElement)) {
-      var call = makeWriteCall(node as XmlElement);
-      if (call != null) {
-        code += '    ${call};\n';
-      }
-    }
-    code += '    return 0; // FIXME: Return first element\n';
-    code += '  }\n';
-    code += '}\n';
-    classes.add(code);
-
-    if (reply != null) {
-      code = '';
-      code += 'class X11${name}Reply extends X11Reply {\n';
-      for (var arg in replyArgs) {
-        code += '  final ${arg};\n';
-      }
-      code += '\n';
-      code +=
-          '  X11${name}Reply(${replyArgNames.map((name) => 'this.${name}').join(', ')});\n';
-      code += '\n';
-      code += '  @override\n';
-      code += '  int encode(X11WriteBuffer buffer) {\n';
-      for (var node in request.children.where((node) => node is XmlElement)) {
-        var call = makeWriteCall(node as XmlElement);
-        if (call != null) {
-          code += '    ${call};\n';
-        }
-      }
-      code += '    return 0; // FIXME: Return first element\n';
-      code += '  }\n';
-      code += '}\n';
-      classes.add(code);
-    }
-
-    code = '';
     code +=
         '  ${returnValue} ${functionName}(${args.join(', ')})${functionSuffix} {\n';
-    code += '    var request = X11${name}Request(${argNames.join(', ')});\n';
+    code +=
+        '    var request = X11${name}Request(${constructorArgs.join(', ')});\n';
     code += '    var buffer = X11WriteBuffer();\n';
-    code += '    var data = request.encode(buffer);\n';
-    code += '    _sendRequest(${opcode}, data, buffer.data);\n';
+    code += '    request.encode(buffer);\n';
+    if (reply != null) {
+      code +=
+          '    var sequenceNumber = _sendRequest(${opcode}, buffer.data);\n';
+      if (returnName != null) {
+        code +=
+            '    var reply = await _awaitReply<X11${name}Reply>(sequenceNumber, X11${name}Reply.fromBuffer);\n';
+        code += '    return reply.${returnName};\n';
+      } else {
+        code +=
+            '    return _awaitReply<X11${name}Reply>(sequenceNumber, X11${name}Reply.fromBuffer);\n';
+      }
+    } else {
+      code += '    return _sendRequest(${opcode}, buffer.data);\n';
+    }
     code += '  }\n';
     functions.add(code);
+  }
+
+  for (var event in xcb.findElements('event')) {
+    var name = event.getAttribute('name');
+    classes.add(makeMessageClass(event, name, 'Event'));
   }
 
   var module = '';
@@ -146,6 +92,124 @@ void main(List<String> args) async {
   module += '}';
 
   print(module);
+}
+
+Map<String, String> getFields(XmlElement element) {
+  var refs = getRefFields(element);
+
+  var fields = <String, String>{};
+  for (var element in getFieldElements(element)) {
+    var fieldName = element.getAttribute('name');
+    if (refs.contains(fieldName)) {
+      continue;
+    }
+
+    var fieldType = makeFieldDartType(element);
+    if (fieldType != null) {
+      fields[xcbFieldToDartName(fieldName)] = fieldType;
+      ;
+    }
+  }
+
+  return fields;
+}
+
+Set<String> getRefFields(XmlElement element) {
+  var refs = <String>{};
+  for (var list
+      in getFieldElements(element).where((e) => e.name.local == 'list')) {
+    var fieldref = list.getElement('fieldref');
+    if (fieldref != null) {
+      refs.add(fieldref.text);
+    }
+  }
+
+  return refs;
+}
+
+String makeMessageClass(XmlElement element, String name, String suffix) {
+  var fieldElements = getFieldElements(element);
+  var fields = getFields(element);
+  var namedArgs = fields.length > 1;
+
+  var constructorArgNames = <String>[];
+  var argNames = <String>[];
+  var args = <String>[];
+  fields.forEach((name, type) {
+    constructorArgNames.add('this.${name}');
+    if (namedArgs) {
+      argNames.add('${name}: ${name}');
+    } else {
+      argNames.add(name);
+    }
+    args.add('${type} ${name}');
+  });
+
+  var code = '';
+  code += 'class X11${name}${suffix} extends X11${suffix} {\n';
+  for (var arg in args) {
+    code += '  final ${arg};\n';
+  }
+  code += '\n';
+  var argList = constructorArgNames.join(', ');
+  if (namedArgs) {
+    argList = '{' + argList + '}';
+  }
+  code += '  X11${name}${suffix}(${argList});\n';
+  code += '\n';
+  code += '  factory X11${name}${suffix}.fromBuffer(X11ReadBuffer buffer) {\n';
+  for (var field in fieldElements) {
+    var call = makeReadCall(field);
+    if (call != null) {
+      code += '    ${call};\n';
+    }
+  }
+  code += '    return X11${name}${suffix}(${argNames.join(', ')});\n';
+  code += '  }\n';
+  code += '\n';
+  code += '  @override\n';
+  code += '  void encode(X11WriteBuffer buffer) {\n';
+  for (var element in fieldElements) {
+    var call = makeWriteCall(element);
+    if (call != null) {
+      code += '    ${call};\n';
+    }
+  }
+  code += '  }\n';
+  code += '}\n';
+
+  return code;
+}
+
+Iterable<XmlElement> getFieldElements(XmlElement element) {
+  return element.children
+      .where((node) => node is XmlElement)
+      .map((node) => node as XmlElement);
+}
+
+String makeFieldDartType(XmlElement element) {
+  if (element.name.local == 'field') {
+    var fieldType = element.getAttribute('type');
+    return xcbTypeToDartType(fieldType);
+  } else if (element.name.local == 'list') {
+    var listType = element.getAttribute('type');
+
+    if (listType == 'char') {
+      return 'String';
+    } else {
+      return 'List<${xcbTypeToDartType(listType)}>';
+    }
+  }
+}
+
+String makeFieldDartName(XmlElement element) {
+  if (element.name.local == 'field') {
+    var fieldName = element.getAttribute('name');
+    return xcbFieldToDartName(fieldName);
+  } else if (element.name.local == 'list') {
+    var listName = element.getAttribute('name');
+    return xcbFieldToDartName(listName);
+  }
 }
 
 String makeReadCall(XmlElement element) {
